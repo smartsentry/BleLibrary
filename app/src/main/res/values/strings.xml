@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">BLeLibray</string>
+    <string name="error_bluetooth_not_supported">Bluetooth Not Supported</string>
+    <string name="ble_not_supported">BLE Not Supported</string>
+    <string name="unknown_device">Unknown Device</string>
 </resources>

@@ -1,6 +1,6 @@
 package com.example.blelibray;
 
-public class MBLite {
+public class MbLite {
 
     private String strOutFrame="";
     private String strInFrame;

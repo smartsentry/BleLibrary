@@ -3,6 +3,7 @@ package com.example.blelibray;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.Application;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -25,6 +26,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
@@ -49,19 +51,15 @@ public class BleService extends Service {
 
     private static final int REQUEST_ENABLE_BT = 1;
     // Stops scanning after 3 seconds.
-    private static final long SCAN_PERIOD = 4000;
+    private static final long SCAN_PERIOD = 3000;
     private LeDeviceList mLeDeviceList = new LeDeviceList();
     private BluetoothLeScanner mBluetoothScanner;
     private boolean mScanning;
     private Set<BluetoothDevice> mBondedDevices;
     private Handler mHandler;
-    private Activity mActivity;
-
-
-
-
-
-
+    private Activity mActivity ;
+    BluetoothDevice mBleDevice;
+    private BleDevParcelable mBleDevParcelable;
     private static final int STATE_DISCONNECTED = 0;
     private static final int STATE_CONNECTING = 1;
     public static final int STATE_CONNECTED = 2;
@@ -101,10 +99,10 @@ public class BleService extends Service {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 intentAction = ACTION_GATT_CONNECTED;
                 mConnectionState = STATE_CONNECTED;
-                broadcastUpdate(intentAction);
+                broadcastGattUpdate(intentAction);
                 Log.i(TAG, "Connected to GATT server.");
                 // Attempts to discover services after successful connection.
-                if (ActivityCompat.checkSelfPermission(getApplicationContext(), android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                if (ActivityCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                     // TODO: Consider calling
                     //    ActivityCompat#requestPermissions
                     // here to request the missing permissions, and then overriding
@@ -123,7 +121,7 @@ public class BleService extends Service {
                 mBluetoothGatt.close();
                 mBluetoothGatt = null;
                 Log.i(TAG, "Disconnected from GATT server.");
-                broadcastUpdate(intentAction);
+                broadcastGattUpdate(intentAction);
             }
         }
 
@@ -131,7 +129,7 @@ public class BleService extends Service {
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED);
+                broadcastGattUpdate(ACTION_GATT_SERVICES_DISCOVERED);
             } else {
                 Log.w(TAG, "onServicesDiscovered received: " + status);
             }
@@ -142,30 +140,34 @@ public class BleService extends Service {
                                          BluetoothGattCharacteristic characteristic,
                                          int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
+                broadcastGattUpdate(ACTION_DATA_AVAILABLE, characteristic);
             }
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
                                             BluetoothGattCharacteristic characteristic) {
-            broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
+            broadcastGattUpdate(ACTION_DATA_AVAILABLE, characteristic);
         }
     };
 
-    private void broadcastUpdate(final String action) {
-//        final Intent intent = new Intent(action);
-//        sendBroadcast(intent);
+    @SuppressLint("MissingPermission")
+    public void stopScan() {
+        mBluetoothScanner.stopScan(mLeScanCallback);
+    }
+    @SuppressLint("MissingPermission")
+    public void startScan() {
+        mBluetoothScanner.startScan(mLeScanCallback);
+    }
 
-
-
+    private void broadcastScanUpdate(final String action) {
         Intent intent = new Intent("device-event");
         // You can also include some extra data.
-        intent.putExtra("message", "broadcastUpdate()");
+        intent.putExtra("device", "broadcastUpdate()");
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
-    private void broadcastUpdate(final String action, final BluetoothGattCharacteristic characteristic) {
+    private void broadcastGattUpdate(final String action, final BluetoothGattCharacteristic characteristic) {
         final Intent intent = new Intent(action);
         UUID destUuid = characteristic.getUuid();
         final byte[] data = characteristic.getValue();
@@ -181,7 +183,13 @@ public class BleService extends Service {
         }
     }
 
-    private void broadcastUpdate(final String action, final String message) {
+
+    private void broadcastGattUpdate(final String action) {
+        final Intent intent = new Intent(action);
+        sendBroadcast(intent);
+    }
+
+    private void broadcastGattUpdate(final String action, final String message) {
         final Intent intent = new Intent(action);
 
         //  For this application, the properties are encoded by the peripheral, so the data is simply
@@ -219,32 +227,19 @@ public class BleService extends Service {
      * Initializes a reference to the local Bluetooth adapter.
      * @return Return true if the initialization is successful.
      */
-    public boolean initialize(Activity activity) {
-        // For API level 18 and above, get a reference to BluetoothAdapter through BluetoothManager.
-        if (mBluetoothManager == null) {
-            mBluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+    public boolean initialize() {
+        //mActivity = activity;
+        //if (hasPermissions()) {
+        if (true) {
+            // For API level 18 and above, get a reference to BluetoothAdapter through BluetoothManager.
             if (mBluetoothManager == null) {
-                Log.e(TAG, "Unable to initialize BluetoothManager.");
-                return false;
+                mBluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+                if (mBluetoothManager == null) {
+                    Log.e(TAG, "Unable to initialize BluetoothManager.");
+                    return false;
+                }
             }
         }
-
-        mBluetoothAdapter = mBluetoothManager.getAdapter();
-        if (mBluetoothAdapter == null) {
-            Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
-            return false;
-        }
-        mBluetoothScanner = mBluetoothAdapter.getBluetoothLeScanner();
-        if (mBluetoothScanner == null) {
-            Log.e(TAG, "Unable to obtain a BluetoothScanner.");
-            return false;
-        }
-
-        mHandler = new Handler();
-        mActivity = activity;
-
-        scanLeDevices(true);
-
         return true;
     }
 
@@ -258,15 +253,21 @@ public class BleService extends Service {
      * callback.
      */
     public boolean connect(final String address) {
+        if(mBluetoothAdapter == null) {
+            if (mBluetoothManager != null) {
+                mBluetoothAdapter = mBluetoothManager.getAdapter();
+            }
+        }
         if (mBluetoothAdapter == null || address == null) {
             Log.w(TAG, "BluetoothAdapter not initialized or unspecified address.");
             return false;
         }
 
         // Previously connected device.  Try to reconnect.
-        if ((mBluetoothDeviceAddress != null) && (address.equals(mBluetoothDeviceAddress)) && (mBluetoothGatt != null)) {
+        //if ((mBluetoothDeviceAddress != null) && (address.equals(mBluetoothDeviceAddress)) && (mBluetoothGatt != null)) {
+        if ((mBluetoothDeviceAddress != null) && (mBluetoothGatt != null)) {
             Log.d(TAG, "Trying to use an existing mBluetoothGatt for connection.");
-            if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 // TODO: Consider calling
                 //    ActivityCompat#requestPermissions
                 // here to request the missing permissions, and then overriding
@@ -290,7 +291,7 @@ public class BleService extends Service {
             return false;
         }
         // Connect to the device, so set the autoConnect parameter to false.
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
             // here to request the missing permissions, and then overriding
@@ -301,7 +302,7 @@ public class BleService extends Service {
             //return true;
         }
         mBluetoothGatt = device.connectGatt(this, false, mGattCallback, BluetoothDevice.TRANSPORT_LE);
-        Log.d(TAG, "Trying to create a new connection.");
+        Log.d(TAG, "Creating a new connection to " + address);
         mBluetoothDeviceAddress = address;
         mConnectionState = STATE_CONNECTING;
         return true;
@@ -318,7 +319,7 @@ public class BleService extends Service {
             Log.w(TAG, "disconnect() - BLE Adapter not initialized");
             return;
         }
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
             // here to request the missing permissions, and then overriding
@@ -334,21 +335,14 @@ public class BleService extends Service {
     /**
      * After using a given BLE device, the app must call this method to ensure resources are
      * released properly.
+     * Safe to assume all permission checks have been done already
      */
+    @SuppressLint("MissingPermission")
     public void close() {
         if (mBluetoothGatt == null) {
             return;
         }
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            //return;
-        }
+        mBluetoothGatt.disconnect();
         mBluetoothGatt.close();
         mBluetoothGatt = null;
     }
@@ -359,7 +353,7 @@ public class BleService extends Service {
             Log.w(TAG, "writechas() BLE Adapter not available");
             return false;
         }
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
             // here to request the missing permissions, and then overriding
@@ -391,7 +385,7 @@ public class BleService extends Service {
             Log.w(TAG, "readchas() BLE Adapter not available");
             return;
         }
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
             // here to request the missing permissions, and then overriding
@@ -413,14 +407,26 @@ public class BleService extends Service {
 //        setCharacteristicNotification(chas, true);
 //    }
 
-    private boolean hasPermissions() {
-        String[] permissions = {Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE};
-        int permissionsCode = 42;
-        Log.d(TAG, "Requesting Permissions");
-            mActivity.requestPermissions(permissions, permissionsCode);
+    public void setApplicationReference(AppCompatActivity activity) {
+        mActivity = activity;
+        mHandler = new Handler();
+    }
 
-            return true;
-        }
+    /*
+        Check all permissions and prompt user if any  not set
+     */
+    public boolean hasPermissions() {
+
+        int permissionsCode = 42;
+        String[] permissions = {Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE};
+        Log.d(TAG, "Requesting Permissions");
+        mActivity.requestPermissions(permissions, permissionsCode);
+
+        return true;
+    }
+
+
+
 
     /*
      * Enables or disables notification on a given characteristic.
@@ -429,17 +435,15 @@ public class BleService extends Service {
      * @param enabled        If true, enable notification.  False otherwise.
      */
     @SuppressLint("MissingPermission")
-    public void setCharacteristicNotification(BluetoothGattCharacteristic characteristic, boolean enabled) {
-        boolean success;
+    public boolean setCharacteristicNotification(BluetoothGattCharacteristic characteristic, boolean enabled) {
+        boolean success = false;
         if (mBluetoothAdapter == null || mBluetoothGatt == null) {
-            Log.w(TAG, "SetCharNotn - BLE Adapter not initialized");
-            return;
+            Log.w(TAG, "setCharacteristicNotification - BLE Adapter not initialized");
+            return (success);
         }
-        if (hasPermissions()) {
-            success = mBluetoothGatt.setCharacteristicNotification(characteristic, enabled);
-            if (success) {
-                Log.w(TAG, "Characteristic enabled");
-            }
+        success = mBluetoothGatt.setCharacteristicNotification(characteristic, enabled);
+        if (success) {
+            Log.i(TAG, "Characteristic Notifications enabled on " + characteristic.getUuid().toString());
         }
         try {
             Thread.sleep(300);
@@ -447,14 +451,17 @@ public class BleService extends Service {
             ie.printStackTrace();
         }
 
-        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(UUID.fromString(CLIENT_CHARACTERISTIC_CONFIG));
-        descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-        mBluetoothGatt.writeDescriptor(descriptor);
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException ie) {
-            ie.printStackTrace();
+        if (success) {
+            BluetoothGattDescriptor descriptor = characteristic.getDescriptor(UUID.fromString(CLIENT_CHARACTERISTIC_CONFIG));
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            success = mBluetoothGatt.writeDescriptor(descriptor);
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+                ie.printStackTrace();
+            }
         }
+        return (success);
     }
 
     /**
@@ -476,7 +483,10 @@ public class BleService extends Service {
        public void addDevice(BluetoothDevice device) {
             String name;
             if (!mLeDevices.contains(device)) {
-                if (ActivityCompat.checkSelfPermission(getApplicationContext(), android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                Application app = mActivity.getApplication();
+                Context ctx = app.getApplicationContext();
+
+                if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                     // TODO: Consider calling
                     //    ActivityCompat#requestPermissions
                     // here to request the missing permissions, and then overriding
@@ -525,9 +535,30 @@ public class BleService extends Service {
      * or OnPause() & OnResume()
      */
     @SuppressLint("MissingPermission")
-    private void scanLeDevices(final boolean enable) {
+    public void scanLeDevices(final boolean enable) {
 
-        if (hasPermissions()) {
+        if (mBluetoothManager == null) {
+            //mBluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+            Application app = mActivity.getApplication();
+            Context ctx = app.getApplicationContext();
+
+            final BluetoothManager bluetoothManager = (BluetoothManager) ctx.getSystemService(ctx.BLUETOOTH_SERVICE);
+//            if (mBluetoothManager == null) {
+//                Log.e(TAG, "Unable to initialize BluetoothManager.");
+//            }
+            mBluetoothAdapter = bluetoothManager.getAdapter();
+            if (mBluetoothAdapter == null) {
+                Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
+                return;
+            }
+            mBluetoothScanner = mBluetoothAdapter.getBluetoothLeScanner();
+            if (mBluetoothScanner == null) {
+                Log.e(TAG, "Unable to obtain a BluetoothScanner.");
+                return;
+            }
+
+        }
+        if (enable) {
             Log.d(TAG, "ScanLeDevice enabled...: ");
             // Stops scanning after a pre-defined scan period.
             mBondedDevices = mBluetoothAdapter.getBondedDevices();
@@ -550,9 +581,11 @@ public class BleService extends Service {
                     mBluetoothScanner.stopScan(mLeScanCallback);
                 }
             }, SCAN_PERIOD);
+            Application app = mActivity.getApplication();
+            Context ctx = app.getApplicationContext();
 
             /* BEWARE Logcat message  E  [GSIM LOG]: gsimLogHandler, msg: MESSAGE_SCAN_START:  see https://stackoverflow.com/questions/69322378/android-ble-scanning   */
-            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            if (ctx.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
                 mActivity.requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN}, 2);
             }
             Log.d(TAG, "Starting scan...: ");
@@ -566,22 +599,28 @@ public class BleService extends Service {
         }
     }
 
+
     /*
         Device scan callback.  Adds device name and address to list as they're found
      */
+    @SuppressLint("MissingPermission")
     public ScanCallback mLeScanCallback = new ScanCallback() {
+        BluetoothDevice device;
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
             super.onScanResult(callbackType, result);
-            BluetoothDevice device;
             device = result.getDevice();
-            mLeDeviceList.addDevice(device);
-            //broadcastUpdate(ACTION_DATA_AVAILABLE, device.getAddress());
+            BleDevParcelable bleDevParcelable = new BleDevParcelable(device);
             Intent intent = new Intent("device-event");
-            intent.putExtra("device_address", device.getAddress());
-            LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
-
-            //broadcastUpdate("device-event", device.getAddress());
+            intent.putExtra("device", bleDevParcelable);
+//            LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
+            if (true) {
+                LocalBroadcastManager instance;
+                Application app = mActivity.getApplication();
+                Context ctx = app.getApplicationContext();
+                instance =LocalBroadcastManager.getInstance(ctx);
+                instance.sendBroadcast(intent);
+            }
         }
 
         @Override
@@ -592,3 +631,4 @@ public class BleService extends Service {
 
 
 }
+
